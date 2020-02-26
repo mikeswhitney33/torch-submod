@@ -46,7 +46,8 @@ class TotalVariation2dWeighted(Function):
         self.refine = refine
         self.average_connected = average_connected
 
-    def forward(self, x, weights_row, weights_col):
+    @staticmethod
+    def forward(ctx, x, weights_row, weights_col):
         r"""Solve the total variation problem and return the solution.
 
         Arguments
@@ -70,61 +71,67 @@ class TotalVariation2dWeighted(Function):
             The solution to the total variation problem, of shape ``(m, n)``.
         """
         opt = tv1w_2d(x.numpy(), weights_col.numpy(), weights_row.numpy(),
-                      **self.tv_args)
-        if self.refine:
-            opt = self._refine(opt, x, weights_row, weights_col)
+                      **ctx.tv_args)
+        # if ctx.refine:
+        opt = TotalVariation2dWeighted._refine(opt, x, weights_row, weights_col)
         opt = torch.Tensor(opt).view_as(x)
-        self.save_for_backward(opt)
+        ctx.save_for_backward(opt)
         return opt
 
-    def _grad_x(self, opt, grad_output):
-        if self.average_connected:
-            blocks = blocks_2d(opt.numpy())
-        else:
-            _, blocks = np.unique(opt.numpy().ravel(), return_inverse=True)
+    @staticmethod
+    def _grad_x(opt, grad_output):
+        # if average_connected:
+        blocks = blocks_2d(opt.numpy())
+        # else:
+        #     _, blocks = np.unique(opt.numpy().ravel(), return_inverse=True)
         grad_x = blockwise_means(blocks.ravel(), grad_output.numpy().ravel())
         # We need the clone as there seems to e a double-free error in py27,
         # namely, torch free()s the array after numpy has already free()d it.
         return torch.from_numpy(grad_x).view(opt.size()).clone()
 
-    def _grad_w_row(self, opt, grad_x):
+    @staticmethod
+    def _grad_w_row(opt, grad_x):
         """Compute the derivative with respect to the row weights."""
         diffs_row = torch.sign(opt[:, :-1] - opt[:, 1:])
         return - diffs_row * (grad_x[:, :-1] - grad_x[:, 1:])
 
-    def _grad_w_col(self, opt, grad_x):
+    @staticmethod
+    def _grad_w_col(opt, grad_x):
         """Compute the derivative with respect to the column weights."""
         diffs_col = torch.sign(opt[:-1, :] - opt[1:, :])
         return - diffs_col * (grad_x[:-1, :] - grad_x[1:, :])
 
-    def backward(self, grad_output):
-        opt, = self.saved_tensors
+    @staticmethod
+    def backward(ctx, grad_output):
+        opt, = ctx.saved_tensors
         grad_weights_row, grad_weights_col = None, None
-        grad_x = self._grad_x(opt, grad_output)
+        grad_x = TotalVariation2dWeighted._grad_x(opt, grad_output)
 
-        if self.needs_input_grad[1]:
-            grad_weights_row = self._grad_w_row(opt, grad_x)
+        if ctx.needs_input_grad[1]:
+            grad_weights_row = TotalVariation2dWeighted._grad_w_row(opt, grad_x)
 
-        if self.needs_input_grad[2]:
-            grad_weights_col = self._grad_w_col(opt, grad_x)
+        if ctx.needs_input_grad[2]:
+            grad_weights_col = TotalVariation2dWeighted._grad_w_col(opt, grad_x)
 
         return grad_x, grad_weights_row, grad_weights_col
 
-    def _refine(self, opt, x, weights_row, weights_col):
+    @staticmethod
+    def _refine(opt, x, weights_row, weights_col):
         """Refine the solution by solving an isotonic regression.
 
         The weights can either be two-dimensional tensors, or of shape (1,)."""
         idx = np.argsort(opt.ravel())  # Will pick an arbitrary order cone.
         ordered_vec = np.zeros_like(idx, dtype=np.float)
         ordered_vec[idx] = np.arange(np.size(opt))
-        f = self._linearize(ordered_vec.reshape(opt.shape),
+        f = TotalVariation2dWeighted._linearize(ordered_vec.reshape(opt.shape),
                             weights_row.numpy(), weights_col.numpy())
         opt_idx = isotonic((x.view(-1).numpy() - f.ravel())[idx])
         opt = np.zeros_like(opt_idx)
         opt[idx] = opt_idx
         return opt
 
-    def _linearize(self, y, weights_row, weights_col):
+    @staticmethod
+    def _linearize(y, weights_row, weights_col):
         """Compute a linearization of the graph-cut function at the given point.
 
         Arguments

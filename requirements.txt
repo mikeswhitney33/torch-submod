@@ -1,0 +1,5 @@
+prox_tv
+numpy
+scikit-learn
+torch
+torchvision

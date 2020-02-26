@@ -10,3 +10,5 @@ torch_submod/blocks*.so
 .hypothesis
 .idea
 .ipynb_checkpoints
+.vscode
+env
